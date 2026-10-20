@@ -5,11 +5,18 @@ constraints -- and then prints the tech stack recommended by the rule based
 recommender.  Every value can be given on the command line; anything that is
 missing is asked for at the prompt.
 
+The tool is free, offline and spends no tokens by default.  Passing --llm
+adds an optional reasoning pass *on top of* the rule based recommendation: the
+rules still decide the stack, the LLM only explains it.  That pass needs an
+API key (LLM_API_KEY in the environment, or --llm-api-key) and, when it
+cannot run, the rule based report is printed exactly as usual.
+
 Examples
 --------
     python ai-tech-stack-planner/src/main.py
     python ai-tech-stack-planner/src/main.py --goal chat --budget 30 --timeline 4
     python ai-tech-stack-planner/src/main.py --goal rag --constraints needs_api,enterprise
+    python ai-tech-stack-planner/src/main.py --goal chat --budget 30 --timeline 4 --llm
 """
 
 from __future__ import annotations
@@ -17,8 +24,10 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from typing import TypeVar
 
+from llm import LLMAdvice, LLMConfig, LLMError, call_llm, format_advice
 from recommender import ProjectProfile, format_recommendation, recommend
 from rules import CONSTRAINTS, GOALS
 
@@ -258,6 +267,29 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: asked for)"
         ),
     )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="add an optional LLM reasoning pass (uses tokens)",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="model name to call (overrides LLM_MODEL)",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        default=None,
+        help="OpenAI-compatible endpoint (overrides LLM_BASE_URL)",
+    )
+    parser.add_argument(
+        "--llm-api-key",
+        default=None,
+        help=(
+            "API key (overrides LLM_API_KEY; the env var is preferred so "
+            "the key stays out of the shell history)"
+        ),
+    )
     return parser
 
 
@@ -280,6 +312,105 @@ def _constraints_prompt() -> str:
         lines.append(f"  {number}) {key} - {label}")
     lines.append("Enter numbers or keys, blank for none: ")
     return "\n".join(lines)
+
+
+# --- The optional LLM pass --------------------------------------------------
+
+
+@dataclass
+class LLMOptions:
+    """What the command line asked for regarding the LLM reasoning pass."""
+
+    enabled: bool = False
+    config: LLMConfig = field(default_factory=LLMConfig)
+
+
+#: Warning shown when --llm is used but no API key is available.
+NO_KEY_WARNING = "LLM pass skipped: no API key set (LLM_API_KEY)."
+
+#: Warning shown when the LLM call failed; the rules based report still stands.
+FAILED_WARNING = (
+    "LLM pass failed: {reason} - the rule based recommendation above is unchanged."
+)
+
+#: How long a failure reason may get before it is cut short.
+MAX_REASON_LENGTH = 120
+
+
+def _one_line(text: str) -> str:
+    """Flatten `text` into a single ASCII line of at most MAX_REASON_LENGTH."""
+    flat = " ".join(str(text).split())
+    flat = flat.encode("ascii", "replace").decode("ascii")
+    if len(flat) > MAX_REASON_LENGTH:
+        flat = flat[: MAX_REASON_LENGTH - 3].rstrip() + "..."
+    return flat
+
+
+def collect_llm_options(argv: list[str] | None = None) -> LLMOptions:
+    """Parse the command line and build the LLM options.
+
+    When --llm is not given, `enabled` is False and no environment variable is
+    read.  When it is given, the environment (LLM_BASE_URL, LLM_API_KEY,
+    LLM_MODEL, LLM_TIMEOUT) is read first and the command line flags win.
+    """
+    args = build_parser().parse_args(argv)
+
+    if not args.llm:
+        # No LLM pass: do not even look at the environment.
+        return LLMOptions(enabled=False)
+
+    config = LLMConfig.from_env()
+
+    if args.llm_base_url is not None:
+        config = replace(config, base_url=args.llm_base_url.strip())
+    if args.llm_model is not None:
+        config = replace(config, model=args.llm_model.strip())
+    if args.llm_api_key is not None:
+        config = replace(config, api_key=args.llm_api_key.strip())
+
+    return LLMOptions(enabled=True, config=config)
+
+
+def run_llm_pass(
+    profile: ProjectProfile,
+    stack: list,
+    config: LLMConfig,
+) -> LLMAdvice | None:
+    """Run the LLM pass.
+
+    Returns the advice, or None when the pass could not run - in that case a
+    short warning is printed to stderr and the rule based recommendation stays
+    untouched.
+    """
+    if not (config.api_key or "").strip():
+        print(NO_KEY_WARNING, file=sys.stderr)
+        return None
+
+    try:
+        return call_llm(config, profile, stack)
+    except LLMError as exc:
+        reason = _one_line(exc)
+    except Exception as exc:  # a broken LLM must never break the tool
+        reason = _one_line(exc) or exc.__class__.__name__
+
+    print(FAILED_WARNING.format(reason=reason or "unknown error"), file=sys.stderr)
+    return None
+
+
+def format_token_line(advice: LLMAdvice) -> str:
+    """Build the one line summary of the tokens the LLM pass used."""
+    usage = advice.usage
+    estimate = advice.prompt_estimate
+    if not (usage.prompt_tokens or usage.completion_tokens or usage.total_tokens):
+        return (
+            f"LLM tokens: ~{estimate} estimated prompt -> "
+            "usage not reported by the API"
+        )
+    return (
+        f"LLM tokens: ~{estimate} estimated prompt -> "
+        f"{usage.prompt_tokens} prompt + {usage.completion_tokens} completion "
+        f"= {usage.total_tokens} total"
+    )
 
 
 # --- Entry points -----------------------------------------------------------
@@ -375,7 +506,27 @@ def main(argv: list[str] | None = None) -> int:
         code = exc.code
         return code if isinstance(code, int) else 2
 
-    print(format_recommendation(recommend(profile)))
+    rec = recommend(profile)
+    print(format_recommendation(rec))
+
+    try:
+        options = collect_llm_options(argv)
+    except UsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except SystemExit as exc:
+        code = exc.code
+        return code if isinstance(code, int) else 2
+
+    if options.enabled:
+        # A failing LLM must never break the tool: the rule based report
+        # above is the real answer, the LLM pass only adds reasoning.
+        advice = run_llm_pass(profile, rec.stack, options.config)
+        if advice is not None:
+            print()
+            print(format_advice(advice).rstrip())
+            print(format_token_line(advice))
+
     return 0
 
 

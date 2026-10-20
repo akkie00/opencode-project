@@ -75,7 +75,7 @@ Use deterministic rules for everything simple; only call the LLM for hard reason
 ## Commit Message Convention
 Concise and descriptive (e.g., "Add demo folder structure and demo file").
 
-## Running the Demo
+## Running the Planner
 ```bash
 python ai-tech-stack-planner/src/main.py
 ```
@@ -108,7 +108,37 @@ Built and verified:
 
 All three example rules above are covered by tests and confirmed by hand.
 
+## Phase 2 Decisions (agreed during build)
+
+- **Provider**: any OpenAI-compatible endpoint, called with `urllib.request` and
+  `json` from the standard library. No SDK, no third-party package.
+- **Scope**: the LLM only annotates the rule based stack. It cannot change a
+  component, a cost or the recommendation — the rules always decide.
+- **Token counting**: a local estimate before the call (characters / 4), then the
+  API's reported usage after it. Both numbers are shown on one line.
+- **Failure**: a missing key or a failed call falls back to the rules with a one
+  line warning on stderr. Exit code stays 0, the report is unchanged.
+- **Dependencies**: none. Standard library only, for the code and the tests.
+- **Caching**: not yet. Caching lands with persistence in Phase 3.
+
+## Phase 2 Status — DONE
+
+Built and verified:
+
+- `ai-tech-stack-planner/src/llm.py` — the only networked module: config from the
+  environment, the short structured prompt, the HTTP call, JSON parsing, token
+  counting and the printed reasoning block.
+- `ai-tech-stack-planner/src/main.py` — gained the optional pass and the flags
+  `--llm`, `--llm-model`, `--llm-base-url` and `--llm-api-key`.
+- `ai-tech-stack-planner/tests/test_llm.py` — 45 stdlib `unittest` tests.
+- `ai-tech-stack-planner/tests/test_cli.py` — 4 new end-to-end tests (8 in total).
+- `README.md` — documents the optional pass. `requirements.txt` — still stdlib only.
+
+101 stdlib `unittest` tests in total, all passing. The default run was confirmed
+to be unchanged and to spend 0 tokens, and a missing key and a timeout were
+confirmed to warn on stderr and keep exit code 0.
+
 ## Next Step
-Phase 2: add an optional LLM reasoning pass with short, structured prompts and
-JSON output. Keep the rule engine as the default so the tool stays free and
-token-free unless a flag asks for the LLM path.
+Phase 3: persistence. Save and load project plans — a small file schema first
+(one JSON file per plan), with a database later if the plans grow. Cache the LLM
+advice in the saved plan so the same plan is not paid for twice.

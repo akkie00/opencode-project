@@ -24,29 +24,48 @@ This file provides guidance for AI agents working on the `opencode-project` repo
 
 ## Project Overview
 
-`opencode-project` is a simple demo repository used to demonstrate a basic folder structure and Git workflow.
+`opencode-project` hosts the **AI Tech Stack Planner**: a local, free command line tool that recommends a minimal-cost AI tech stack for a project.
+
+- It asks for a goal, a monthly budget, a timeline and constraints, applies deterministic if/then rules, and prints a recommended stack with a rough monthly cost.
+- The default run is free and offline: **0 LLM tokens, no API keys, no network access**. The optional `--llm` flag adds a reasoning pass that only comments on the stack the rules picked — the rules always decide.
+- Python 3 standard library only. There is nothing to install.
+- **Phase 1** (rule based recommender) and **Phase 2** (optional LLM reasoning pass with token counting) are done. **Phase 3** (persistence — save and load project plans) is next.
 
 ## Folder Structure
 
 ```text
 opencode-project/
-├── README.md
-├── agents.md
-└── demo/
+├── README.md                # User facing documentation of the planner
+├── AGENTS.md                # Guidance for AI agents working in this repository
+├── plan.md                  # Project plan, phase decisions and status
+├── requirements.txt         # Intentionally empty — standard library only
+├── .gitignore               # Ignores Python bytecode and caches
+└── ai-tech-stack-planner/
     ├── src/
-    │   └── demo.py
+    │   ├── main.py          # CLI entry point — collects the profile, prints the report
+    │   ├── rules.py         # the rule engine — deterministic if/then logic (zero tokens)
+    │   ├── recommender.py   # combines the rules into a stack + the printed report
+    │   └── llm.py           # optional LLM reasoning pass — the only networked module
+    ├── tests/
+    │   ├── test_rules.py        # budget tiers, timeline buckets, the rule engine
+    │   ├── test_recommender.py  # stacks, costs and the printed report
+    │   ├── test_cli.py          # end-to-end runs of the command line
+    │   └── test_llm.py          # prompt building, JSON parsing, token counting
     └── assets/
         └── .gitkeep
 ```
 
 ## Conventions
 
-- Commit messages should be concise and descriptive (e.g., "Add demo folder structure and demo file").
-- Keep the demo minimal — do not add production code without discussion.
-- Place new source files under `demo/src/` and supporting assets under `demo/assets/`.
+- Commit messages should be concise and descriptive (e.g., "Add rule engine for budget tiers").
+- Keep the project minimal — do not add production code without discussion.
+- Stay on the Python standard library unless the user agrees otherwise; no third-party packages without explicit approval.
+- Place new source files under `ai-tech-stack-planner/src/`, tests under `ai-tech-stack-planner/tests/`, and supporting assets under `ai-tech-stack-planner/assets/`.
 
-## Running the Demo
+## Running the Planner
 
 ```bash
-python demo/src/demo.py
+python ai-tech-stack-planner/src/main.py
+python ai-tech-stack-planner/src/main.py --goal rag --budget 200 --timeline 4 --constraints needs_api
+python -m unittest discover -s ai-tech-stack-planner/tests -v
 ```
