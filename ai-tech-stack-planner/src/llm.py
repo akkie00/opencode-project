@@ -61,9 +61,14 @@ BAR = "=" * WIDTH
 
 #: The instructions we give the model.  It is deliberately short: every
 #: character we send costs tokens, and a short prompt keeps the bill small.
+#: The keys of the answer are named here and only here - a small model that
+#: sees the same list twice in the request tends to echo the request back.
 SYSTEM_PROMPT = (
     "You are a cloud architect reviewing an AI project plan. "
-    "Reply with one JSON object only, no prose. "
+    "Reply with one JSON object only, no prose, no markdown. "
+    "Use exactly these keys: summary (1-2 short sentences), "
+    "risks (up to 3 short strings), suggestions (up to 3 short strings), "
+    "confidence (low, medium or high). "
     "The stack is fixed: comment on it, do not redesign it. "
     "Goals: chat=chatbot, rag=docs search, document=PDF processing, "
     "code=coding assistant. "
@@ -183,11 +188,11 @@ def build_messages(profile: Any, stack: Sequence[Any]) -> list[dict]:
     `profile` is duck typed: it needs .goal, .budget, .timeline_weeks, .constraints.
     `stack` items are duck typed: they need .name, .category, .cost_month.
     The user message is a JSON object with the keys:
-        goal, budget_usd, weeks, constraints, stack, answer
+        goal, budget_usd, weeks, constraints, stack
     `stack` is a list of {name, category, cost_month} objects (no long purpose text -
     that is what keeps the prompt short).
-    `answer` is the shape the model must reply with:
-        {"summary": "<=2 sentences>", "risks": ["..."], "suggestions": ["..."], "confidence": "low|medium|high"}
+    The shape of the answer we want back is named in SYSTEM_PROMPT, so the list
+    of keys is not repeated here.
     Keep the whole prompt short: under 1500 characters for a normal profile.
     """
     user_payload = {
@@ -205,15 +210,6 @@ def build_messages(profile: Any, stack: Sequence[Any]) -> list[dict]:
             }
             for component in stack
         ],
-        # The shape of the answer we want back.  Showing it to the model
-        # saves a round trip of "please try again" and a second round trip
-        # of tokens.
-        "answer": {
-            "summary": "<=2 sentences",
-            "risks": ["..."],
-            "suggestions": ["..."],
-            "confidence": "low|medium|high",
-        },
     }
 
     return [
@@ -302,7 +298,9 @@ def parse_advice(text: str) -> dict:
 
     Tolerate ```json fenced blocks and extra prose before/after the JSON object.
     Missing keys become empty defaults; a wrong type falls back to the default too.
-    Raises LLMError when no JSON object can be found.
+    Raises LLMError when no JSON object can be found, and also when the object
+    holds no advice at all - a reply with some of the keys is fine, a reply
+    with none of them is not an answer.
     """
     if not isinstance(text, str) or not text.strip():
         raise LLMError("the model reply was empty")
@@ -311,12 +309,22 @@ def parse_advice(text: str) -> dict:
     if data is None:
         raise LLMError("the model reply did not contain a JSON object")
 
-    return {
+    advice = {
         "summary": _clean_text(data.get("summary")),
         "risks": _clean_list(data.get("risks")),
         "suggestions": _clean_list(data.get("suggestions")),
         "confidence": _clean_text(data.get("confidence")).lower(),
     }
+
+    # A small model sometimes answers by echoing the request back.  That JSON
+    # object holds none of our keys, so it carries no advice - and an empty
+    # block would look like a real answer.  Say so instead.
+    if not (advice["summary"] or advice["risks"] or advice["suggestions"]):
+        raise LLMError(
+            "the model did not return any advice - it replied with something else"
+        )
+
+    return advice
 
 
 # ---------------------------------------------------------------------------

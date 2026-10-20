@@ -672,7 +672,10 @@ def main(argv: list[str] | None = None) -> int:
         pricing_region=args.region,
     )
 
-    print(f"Open http://{args.host}:{args.port} in your browser.")
+    # The URL sits on its own line on purpose: copying it out of a sentence
+    # would drag the full stop along and give you a broken address.
+    print("Open this URL in your browser:")
+    print(f"  http://{args.host}:{args.port}")
     print("The app stops with Ctrl+C.")
 
     try:

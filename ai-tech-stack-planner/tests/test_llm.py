@@ -38,6 +38,16 @@ FAKE_BODY = {
     "usage": {"prompt_tokens": 321, "completion_tokens": 88, "total_tokens": 409},
 }
 
+#: A small model sometimes answers by echoing the request back instead of
+#: answering.  The object below is such an echo: it has none of the four keys
+#: we asked for, so it carries no advice at all.
+ECHOED_REPLY = (
+    '{"goal":"document","budget_usd":0,"weeks":4,"constraints":["needs_api"],'
+    '"stack":[{"name":"Azure OpenAI","category":"model","cost_month":25.0}],'
+    '"answer":{"summary":"<=2 sentences","risks":["..."],'
+    '"suggestions":["..."],"confidence":"low|medium|high"}}'
+)
+
 
 @dataclass
 class FakeProfile:
@@ -211,8 +221,17 @@ class TestBuildMessages(unittest.TestCase):
     def test_user_message_has_the_documented_keys(self):
         payload = self.user_payload()
 
-        for key in ("goal", "budget_usd", "weeks", "constraints", "stack", "answer"):
+        for key in ("goal", "budget_usd", "weeks", "constraints", "stack"):
             self.assertIn(key, payload, f"the user message should carry '{key}'")
+
+    def test_the_key_list_is_not_repeated_in_the_user_message(self):
+        payload = self.user_payload()
+
+        self.assertNotIn(
+            "answer",
+            payload,
+            "the keys of the answer are named once, in the system prompt",
+        )
 
     def test_user_message_carries_the_profile_values(self):
         payload = self.user_payload()
@@ -236,15 +255,37 @@ class TestBuildMessages(unittest.TestCase):
             self.assertEqual(entry["category"], component.category)
             self.assertEqual(entry["cost_month"], component.cost_month)
 
-    def test_answer_is_the_documented_skeleton(self):
-        answer = self.user_payload()["answer"]
+    def test_the_system_prompt_names_the_keys(self):
+        prompt = self.messages[0]["content"]
 
         for key in ("summary", "risks", "suggestions", "confidence"):
-            self.assertIn(key, answer, f"the answer skeleton should carry '{key}'")
-        self.assertIsInstance(answer["risks"], list, "risks should be a list")
-        self.assertIsInstance(answer["suggestions"], list, "suggestions should be a list")
-        self.assertIsInstance(answer["summary"], str, "summary should be a string")
-        self.assertIsInstance(answer["confidence"], str, "confidence should be a string")
+            self.assertIn(key, prompt, f"the system prompt should name '{key}'")
+
+
+class TestSystemPrompt(unittest.TestCase):
+    """The system prompt tells the model which keys its answer needs."""
+
+    def test_the_prompt_names_the_four_keys(self):
+        for key in ("summary", "risks", "suggestions", "confidence"):
+            self.assertIn(
+                key,
+                llm.SYSTEM_PROMPT,
+                f"the system prompt should name '{key}'",
+            )
+
+    def test_the_prompt_keeps_the_fixed_stack_rule(self):
+        self.assertIn(
+            "comment on it, do not redesign it",
+            llm.SYSTEM_PROMPT,
+            "the model must not redesign the stack",
+        )
+
+    def test_the_prompt_stays_short(self):
+        self.assertLess(
+            len(llm.SYSTEM_PROMPT),
+            600,
+            "every character of the prompt costs tokens",
+        )
 
 
 class TestBuildPrompt(unittest.TestCase):
@@ -317,6 +358,22 @@ class TestParseAdvice(unittest.TestCase):
             "a missing suggestions key should default to an empty list",
         )
         self.assertIsInstance(advice["confidence"], str, "confidence should always be a string")
+        self.assertEqual(advice["confidence"], "", "a missing confidence key should default to an empty string")
+
+    def test_a_reply_without_any_of_the_keys_raises_an_llm_error(self):
+        with self.assertRaises(llm.LLMError, msg="an empty object must raise LLMError"):
+            llm.parse_advice("{}")
+
+    def test_the_echoed_request_raises_an_llm_error(self):
+        # A small model sometimes sends the request back instead of an answer.
+        # The echo holds none of our keys, so it is not advice.
+        with self.assertRaises(llm.LLMError, msg="an echoed request must raise LLMError"):
+            llm.parse_advice(ECHOED_REPLY)
+
+    def test_a_reply_with_only_a_confidence_raises_an_llm_error(self):
+        # Confidence alone is not advice - there is nothing to show the user.
+        with self.assertRaises(llm.LLMError, msg="confidence alone must raise LLMError"):
+            llm.parse_advice('{"confidence": "high"}')
 
     def test_text_without_json_raises_an_llm_error(self):
         with self.assertRaises(llm.LLMError, msg="text without JSON must raise LLMError"):
@@ -513,6 +570,15 @@ class TestCallLLM(unittest.TestCase):
 
         with self.assertRaises(llm.LLMError, msg="a body without any choice must raise LLMError"):
             self.call(transport)
+
+    def test_an_echoed_request_raises_an_llm_error(self):
+        body = {
+            "choices": [{"message": {"content": ECHOED_REPLY}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        }
+
+        with self.assertRaises(llm.LLMError, msg="an echoed request must raise LLMError"):
+            self.call(RecordingTransport(body))
 
 
 class TestFormatAdvice(unittest.TestCase):
