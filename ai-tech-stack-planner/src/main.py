@@ -11,12 +11,20 @@ rules still decide the stack, the LLM only explains it.  That pass needs an
 API key (LLM_API_KEY in the environment, or --llm-api-key) and, when it
 cannot run, the rule based report is printed exactly as usual.
 
+Phase 3 adds persistence: a plan (the profile, the recommendation and any
+LLM advice) can be saved as one JSON file in the plans/ folder and loaded
+back later.  Loading a saved plan never re-runs the rules and never pays for
+the LLM a second time - the saved advice is reused as it is.
+
 Examples
 --------
     python ai-tech-stack-planner/src/main.py
     python ai-tech-stack-planner/src/main.py --goal chat --budget 30 --timeline 4
     python ai-tech-stack-planner/src/main.py --goal rag --constraints needs_api,enterprise
     python ai-tech-stack-planner/src/main.py --goal chat --budget 30 --timeline 4 --llm
+    python ai-tech-stack-planner/src/main.py --save my-chat
+    python ai-tech-stack-planner/src/main.py --load my-chat
+    python ai-tech-stack-planner/src/main.py --list-plans
 """
 
 from __future__ import annotations
@@ -25,10 +33,18 @@ import argparse
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime
+from pathlib import Path
 from typing import TypeVar
 
+import storage
 from llm import LLMAdvice, LLMConfig, LLMError, call_llm, format_advice
-from recommender import ProjectProfile, format_recommendation, recommend
+from recommender import (
+    ProjectProfile,
+    format_cost,
+    format_recommendation,
+    recommend,
+)
 from rules import CONSTRAINTS, GOALS
 
 # --- Defaults ---------------------------------------------------------------
@@ -45,6 +61,9 @@ MAX_ATTEMPTS = 3
 
 #: Helper type so the helpers below can work with any kind of answer.
 T = TypeVar("T")
+
+#: The repository root - used to show the plans folder in a short way.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class UsageError(Exception):
@@ -290,6 +309,43 @@ def build_parser() -> argparse.ArgumentParser:
             "the key stays out of the shell history)"
         ),
     )
+    parser.add_argument(
+        "--save",
+        metavar="NAME",
+        default=None,
+        help="save the plan under this name (one JSON file per plan)",
+    )
+    parser.add_argument(
+        "--load",
+        metavar="NAME",
+        default=None,
+        help="load a saved plan and print it",
+    )
+    parser.add_argument(
+        "--list-plans",
+        action="store_true",
+        help="list the saved plans",
+    )
+    parser.add_argument(
+        "--delete",
+        metavar="NAME",
+        default=None,
+        help="delete a saved plan",
+    )
+    parser.add_argument(
+        "--plans-dir",
+        metavar="PATH",
+        default=None,
+        help=(
+            "folder that holds the saved plans "
+            "(default: the repository's plans/ folder)"
+        ),
+    )
+    parser.add_argument(
+        "--llm-refresh",
+        action="store_true",
+        help="with --load, get fresh LLM advice instead of the saved advice",
+    )
     return parser
 
 
@@ -346,16 +402,21 @@ def _one_line(text: str) -> str:
     return flat
 
 
-def collect_llm_options(argv: list[str] | None = None) -> LLMOptions:
+def collect_llm_options(
+    argv: list[str] | None = None,
+    force: bool = False,
+) -> LLMOptions:
     """Parse the command line and build the LLM options.
 
     When --llm is not given, `enabled` is False and no environment variable is
-    read.  When it is given, the environment (LLM_BASE_URL, LLM_API_KEY,
-    LLM_MODEL, LLM_TIMEOUT) is read first and the command line flags win.
+    read.  `force` turns the pass on anyway - --llm-refresh uses it, because
+    asking for fresh advice means asking for a call.  When the pass is on, the
+    environment (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_TIMEOUT) is read
+    first and the command line flags win.
     """
     args = build_parser().parse_args(argv)
 
-    if not args.llm:
+    if not (args.llm or force):
         # No LLM pass: do not even look at the environment.
         return LLMOptions(enabled=False)
 
@@ -411,6 +472,76 @@ def format_token_line(advice: LLMAdvice) -> str:
         f"{usage.prompt_tokens} prompt + {usage.completion_tokens} completion "
         f"= {usage.total_tokens} total"
     )
+
+
+# --- Saved plans (Phase 3) --------------------------------------------------
+
+#: Note printed when a loaded plan reuses the LLM advice it was saved with.
+SAVED_ADVICE_NOTE = (
+    "Note: the LLM advice came from the saved plan, so no new tokens were spent."
+)
+
+#: Error shown when --llm-refresh is used without --load.
+REFRESH_WITHOUT_LOAD = "Error: --llm-refresh only makes sense with --load."
+
+#: Column widths of the plan list.
+NAME_WIDTH = 15
+GOAL_WIDTH = 9
+COST_WIDTH = 10
+
+
+def _display_plans_dir(plans_dir: Path) -> str:
+    """Show the plans folder the way the user would name it.
+
+    A folder inside the repository is shown relative to the repository root
+    (``plans/``); any other folder is shown with its full path, so the user
+    always knows where the plans live.
+    """
+    try:
+        relative = Path(plans_dir).resolve().relative_to(REPO_ROOT.resolve())
+    except (ValueError, OSError):
+        return str(plans_dir)
+
+    text = relative.as_posix()
+    if text == ".":
+        return "./"
+    return f"{text}/"
+
+
+def _format_saved_at(saved_at: str) -> str:
+    """Shorten a saved timestamp to ``YYYY-MM-DD HH:MM``.
+
+    The timestamp is written by storage.py, so we try to read it as an ISO
+    timestamp and fall back to the first 16 characters when it is something
+    else.
+    """
+    text = str(saved_at).strip()
+    if not text:
+        return ""
+
+    candidate = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+    try:
+        moment = datetime.fromisoformat(candidate)
+    except ValueError:
+        return text[:16].replace("T", " ")
+    return moment.strftime("%Y-%m-%d %H:%M")
+
+
+def _format_plan_row(summary: storage.PlanSummary) -> str:
+    """Build one line of the plan list: name, goal, cost and saved time."""
+    return (
+        f"  {summary.name:<{NAME_WIDTH}}"
+        f"{summary.goal:<{GOAL_WIDTH}}"
+        f"{format_cost(summary.monthly_cost):<{COST_WIDTH}}"
+        f"saved {_format_saved_at(summary.saved_at)}"
+    )
+
+
+def _print_advice(advice: LLMAdvice) -> None:
+    """Print the LLM block and the token line, like a live run does."""
+    print()
+    print(format_advice(advice).rstrip())
+    print(format_token_line(advice))
 
 
 # --- Entry points -----------------------------------------------------------
@@ -493,8 +624,8 @@ def collect_profile(argv: list[str] | None = None) -> ProjectProfile:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the planner. Returns 0 on success and 2 on invalid input."""
+def _command_plan(args, argv: list[str] | None) -> int:
+    """The normal run: profile in, recommendation out, then an optional save."""
     try:
         profile = collect_profile(argv)
     except UsageError as exc:
@@ -509,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
     rec = recommend(profile)
     print(format_recommendation(rec))
 
+    advice = None
     try:
         options = collect_llm_options(argv)
     except UsageError as exc:
@@ -523,11 +655,127 @@ def main(argv: list[str] | None = None) -> int:
         # above is the real answer, the LLM pass only adds reasoning.
         advice = run_llm_pass(profile, rec.stack, options.config)
         if advice is not None:
-            print()
-            print(format_advice(advice).rstrip())
-            print(format_token_line(advice))
+            _print_advice(advice)
+
+    if args.save is not None:
+        # Only now is the plans folder touched, so a run without --save
+        # never writes anything to disk.
+        try:
+            plans_dir = storage.resolve_plans_dir(args.plans_dir)
+            path = storage.save_plan(plans_dir, args.save, rec, advice)
+        except storage.PlanError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        print(f"Saved plan '{args.save}' to {path}.")
 
     return 0
+
+
+def _command_load(args, argv: list[str] | None) -> int:
+    """Load a saved plan and print it - no questions, no new rules, no tokens."""
+    try:
+        plans_dir = storage.resolve_plans_dir(args.plans_dir)
+        saved = storage.load_plan(plans_dir, args.load)
+    except storage.PlanError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    print(format_recommendation(saved.recommendation))
+
+    try:
+        options = collect_llm_options(argv, force=args.llm_refresh)
+    except UsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except SystemExit as exc:
+        code = exc.code
+        return code if isinstance(code, int) else 2
+
+    if args.llm_refresh:
+        # Fresh advice replaces the saved advice, so there is no note line.
+        advice = run_llm_pass(
+            saved.profile,
+            saved.recommendation.stack,
+            options.config,
+        )
+        if advice is not None:
+            _print_advice(advice)
+        return 0
+
+    if saved.llm is not None:
+        # The advice was paid for when the plan was saved: reuse it.
+        _print_advice(saved.llm)
+        print(SAVED_ADVICE_NOTE)
+        return 0
+
+    if options.enabled:
+        # There is no saved advice to reuse, so a fresh pass is the only way.
+        advice = run_llm_pass(
+            saved.profile,
+            saved.recommendation.stack,
+            options.config,
+        )
+        if advice is not None:
+            _print_advice(advice)
+
+    return 0
+
+
+def _command_list_plans(args) -> int:
+    """List the saved plans."""
+    try:
+        plans_dir = storage.resolve_plans_dir(args.plans_dir)
+        summaries = storage.list_plans(plans_dir)
+    except storage.PlanError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if not summaries:
+        print(f"No saved plans in {_display_plans_dir(plans_dir)}.")
+        return 0
+
+    print(f"Saved plans in {_display_plans_dir(plans_dir)}")
+    for summary in sorted(summaries, key=lambda item: item.name):
+        print(_format_plan_row(summary))
+    return 0
+
+
+def _command_delete(args) -> int:
+    """Delete a saved plan."""
+    try:
+        plans_dir = storage.resolve_plans_dir(args.plans_dir)
+        storage.delete_plan(plans_dir, args.delete)
+    except storage.PlanError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"Deleted plan '{args.delete}'.")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the planner. Returns 0 on success and 2 on invalid input."""
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit as exc:
+        # argparse already printed the problem (for example --help or a bad flag).
+        code = exc.code
+        return code if isinstance(code, int) else 2
+
+    if args.llm_refresh and not args.load:
+        print(REFRESH_WITHOUT_LOAD, file=sys.stderr)
+        return 2
+
+    if args.list_plans:
+        return _command_list_plans(args)
+
+    if args.delete is not None:
+        return _command_delete(args)
+
+    if args.load is not None:
+        return _command_load(args, argv)
+
+    return _command_plan(args, argv)
 
 
 if __name__ == "__main__":

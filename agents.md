@@ -29,7 +29,7 @@ This file provides guidance for AI agents working on the `opencode-project` repo
 - It asks for a goal, a monthly budget, a timeline and constraints, applies deterministic if/then rules, and prints a recommended stack with a rough monthly cost.
 - The default run is free and offline: **0 LLM tokens, no API keys, no network access**. The optional `--llm` flag adds a reasoning pass that only comments on the stack the rules picked — the rules always decide.
 - Python 3 standard library only. There is nothing to install.
-- **Phase 1** (rule based recommender) and **Phase 2** (optional LLM reasoning pass with token counting) are done. **Phase 3** (persistence — save and load project plans) is next.
+- **Phase 1** (rule based recommender), **Phase 2** (optional LLM reasoning pass with token counting) and **Phase 3** (persistence — save and load project plans) are done. **Phase 4** (the web UI and real cost data) is next.
 
 ## Folder Structure
 
@@ -40,17 +40,20 @@ opencode-project/
 ├── plan.md                  # Project plan, phase decisions and status
 ├── requirements.txt         # Intentionally empty — standard library only
 ├── .gitignore               # Ignores Python bytecode and caches
+├── plans/                   # The saved plans — created at runtime, gitignored
 └── ai-tech-stack-planner/
     ├── src/
     │   ├── main.py          # CLI entry point — collects the profile, prints the report
     │   ├── rules.py         # the rule engine — deterministic if/then logic (zero tokens)
     │   ├── recommender.py   # combines the rules into a stack + the printed report
-    │   └── llm.py           # optional LLM reasoning pass — the only networked module
+    │   ├── llm.py           # optional LLM reasoning pass — the only networked module
+    │   └── storage.py       # saves and loads plans — one JSON file per plan
     ├── tests/
     │   ├── test_rules.py        # budget tiers, timeline buckets, the rule engine
     │   ├── test_recommender.py  # stacks, costs and the printed report
     │   ├── test_cli.py          # end-to-end runs of the command line
-    │   └── test_llm.py          # prompt building, JSON parsing, token counting
+    │   ├── test_llm.py          # prompt building, JSON parsing, token counting
+    │   └── test_storage.py      # saving, loading, listing and deleting plans
     └── assets/
         └── .gitkeep
 ```

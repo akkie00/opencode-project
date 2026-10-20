@@ -12,6 +12,9 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# Saved plans — local project files, never committed by accident
+plans/
+
 # Editors
 .vscode/
 .idea/

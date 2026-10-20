@@ -138,7 +138,47 @@ Built and verified:
 to be unchanged and to spend 0 tokens, and a missing key and a timeout were
 confirmed to warn on stderr and keep exit code 0.
 
+## Phase 3 Decisions (agreed during build)
+
+- **One JSON file per plan**, not one big file for everything. A plan can be read,
+  copied, diffed or deleted on its own, and one broken file never takes the other
+  plans down with it.
+- **Flags on the existing CLI**, not subcommands. `--save`, `--load`,
+  `--list-plans` and `--delete` sit next to `--goal` and `--llm`, so the tool stays
+  a single command.
+- **A plan holds the profile, the result and the LLM advice.** Loading replays it
+  without re-running the rules and without paying for the LLM a second time.
+- **The plans live in the repository's `plans/` folder.** The folder is gitignored,
+  and `--plans-dir` moves it somewhere else.
+- **Plan names are safe file names**: letters, digits, dash and underscore only
+  (1 to 64 characters, not starting with a dash), so a name can never turn into a
+  path.
+- **The file format is plain JSON with a `schema_version`.** A file written by a
+  newer version of the tool is refused with a clear message instead of being read
+  into nonsense.
+- **Dependencies**: none. Standard library only, for the code and the tests.
+
+## Phase 3 Status — DONE
+
+Built and verified:
+
+- `ai-tech-stack-planner/src/storage.py` — one JSON file per plan: `save_plan()`,
+  `load_plan()`, `list_plans()`, `delete_plan()`, the plan name check and the
+  `schema_version` handling. It prints nothing; the CLI prints.
+- `ai-tech-stack-planner/src/main.py` — gained the flags `--save`, `--load`,
+  `--list-plans`, `--delete`, `--plans-dir` and `--llm-refresh`.
+- `ai-tech-stack-planner/tests/test_storage.py` — 40 stdlib `unittest` tests.
+- `ai-tech-stack-planner/tests/test_cli.py` — 10 new end-to-end tests (18 in total).
+- `README.md` — documents the saved plans. `requirements.txt` — still stdlib only.
+- `.gitignore` — ignores the `plans/` folder.
+
+151 stdlib `unittest` tests in total, all passing. The save and load round trip, the
+plan list, the deletion, a bad plan name and a missing plan were confirmed by hand,
+and loading a saved plan was confirmed to reuse the saved advice instead of calling
+the LLM again.
+
 ## Next Step
-Phase 3: persistence. Save and load project plans — a small file schema first
-(one JSON file per plan), with a database later if the plans grow. Cache the LLM
-advice in the saved plan so the same plan is not paid for twice.
+Phase 4: UI + real cost data. A simple web interface plus optional cloud pricing
+integration (Azure/AWS) for real cost estimates. The rule engine and the saved plan
+format stay as they are, so the web UI can use the same modules and read the same
+plan files.

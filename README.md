@@ -13,6 +13,9 @@ There is also an optional LLM reasoning pass behind the `--llm` flag. It comment
 the stack the rules picked — summary, risks, suggestions, confidence. It is the only
 part of the tool that talks to the network, and it stays off until you ask for it.
 
+A plan can be saved and loaded again later. The saved plan keeps the stack and the
+LLM advice, so loading it prints the same answer without paying for the LLM twice.
+
 ## How it works
 
 ```text
@@ -25,6 +28,8 @@ User input (goal, budget, timeline, constraints)
 [Output Formatter]  — prints the readable recommendation
         ↓
 [LLM Pass]          — optional (--llm): comments on the stack, never changes it
+        ↓
+[Storage]            — optional (--save): writes the plan as one JSON file
 ```
 
 - **Rule engine** (`src/rules.py`) turns the budget into a tier (micro / mid /
@@ -37,6 +42,9 @@ User input (goal, budget, timeline, constraints)
 - **LLM pass** (`src/llm.py`) is optional and off by default. With `--llm` it asks an
   OpenAI-compatible model to comment on the finished stack and counts the tokens it
   used.
+- **Storage** (`src/storage.py`) saves the plan — the profile, the recommendation and
+  the LLM advice — as one JSON file in `plans/`, and reads it back without running
+  the rules or the LLM again.
 
 ## Project layout
 
@@ -51,12 +59,14 @@ opencode-project/
     │   ├── main.py          # Entry point — collects user input
     │   ├── rules.py         # If/then logic for stack recommendations (zero tokens)
     │   ├── recommender.py   # Combines rules into a tech stack recommendation
-    │   └── llm.py           # Optional LLM reasoning pass — the only networked module
+    │   ├── llm.py           # Optional LLM reasoning pass — the only networked module
+    │   └── storage.py       # Saves and loads plans as one JSON file per plan
     ├── tests/
     │   ├── test_rules.py        # Budget tiers, timeline buckets, rule engine
     │   ├── test_recommender.py  # Stacks, costs and the printed report
     │   ├── test_cli.py          # End-to-end runs of the command line
-    │   └── test_llm.py          # Prompt building, JSON parsing, token counting
+    │   ├── test_llm.py          # Prompt building, JSON parsing, token counting
+    │   └── test_storage.py      # Saving, loading, listing and deleting plans
     └── assets/
         └── .gitkeep
 ```
@@ -237,11 +247,163 @@ LLM pass skipped: no API key set (LLM_API_KEY).
 LLM pass failed: the request timed out after 2.0 seconds - the rule based recommendation above is unchanged.
 ```
 
+## Saving and loading plans
+
+A plan is worth keeping: the profile you gave, the stack the rules picked and the
+LLM advice (if there was one). `--save` writes it to disk, `--load` prints it back.
+
+| Flag | Meaning |
+| --- | --- |
+| `--save NAME` | save the plan under this name (one JSON file per plan) |
+| `--load NAME` | load a saved plan and print it |
+| `--list-plans` | list the saved plans |
+| `--delete NAME` | delete a saved plan |
+| `--plans-dir PATH` | the folder that holds the plans (default: the repository's `plans/` folder) |
+| `--llm-refresh` | with `--load`, get fresh LLM advice instead of the saved advice |
+
+Save a plan by adding `--save` to any normal run:
+
+```bash
+python ai-tech-stack-planner/src/main.py --goal chat --budget 30 --timeline 4 --constraints local_only --save my-chat
+```
+
+```text
+Saved plan 'my-chat' to /path/to/opencode-project/plans/my-chat.json.
+```
+
+The path after `to` is the file that was written, so it shows the full path on your
+machine.
+
+One plan is one JSON file inside the `plans/` folder, so a plan can be read, copied
+or deleted on its own. The folder is created when it does not exist yet, and it is
+in `.gitignore` — a saved plan is never committed by accident.
+
+Use `--plans-dir` to keep the plans somewhere else:
+
+```bash
+python ai-tech-stack-planner/src/main.py --goal chat --budget 30 --timeline 4 --save my-chat --plans-dir ~/my-plans
+```
+
+### Loading replays the plan
+
+`--load` prints the plan exactly as it was saved. It does not re-run the rules, it
+asks no questions, and it does **not** call the LLM again — the advice you already
+paid for is reused:
+
+```bash
+python ai-tech-stack-planner/src/main.py --load my-chat
+```
+
+```text
+Note: the LLM advice came from the saved plan, so no new tokens were spent.
+```
+
+`--load --llm` still reuses the saved advice. Add `--llm-refresh` when you want a
+fresh opinion instead — that is the only case that spends tokens a second time:
+
+```bash
+python ai-tech-stack-planner/src/main.py --load my-chat --llm-refresh
+```
+
+Without `--load` the flag is refused:
+
+```text
+Error: --llm-refresh only makes sense with --load.
+```
+
+### Listing and deleting
+
+```bash
+python ai-tech-stack-planner/src/main.py --list-plans
+```
+
+```text
+Saved plans in plans/
+  demo-plan      chat     $0/mo     saved 2026-10-20 23:06
+```
+
+An empty folder says so:
+
+```text
+No saved plans in plans/.
+```
+
+One plan is removed by its name:
+
+```bash
+python ai-tech-stack-planner/src/main.py --delete my-chat
+```
+
+```text
+Deleted plan 'my-chat'.
+```
+
+### The plan name
+
+A plan name may only use letters, digits, dash and underscore — 1 to 64 characters,
+and it cannot start with a dash. A name like `bad/name` is refused, so a name can
+never turn into a path.
+
+Every problem — a bad name, a missing plan, a file that cannot be read — is
+reported the same way, on stderr, with exit code 2. The message names the plans
+folder the plan should have been in:
+
+```text
+Error: there is no saved plan called 'nope' in /path/to/opencode-project/plans
+```
+
+### The saved file
+
+`plans/my-chat.json` is plain, human-readable JSON:
+
+```json
+{
+  "schema_version": 1,
+  "name": "demo-plan",
+  "saved_at": "2026-10-20T23:06:05",
+  "profile": {
+    "goal": "chat",
+    "budget": 30.0,
+    "timeline_weeks": 4,
+    "constraints": [
+      "local_only"
+    ]
+  },
+  "recommendation": {
+    "monthly_cost": 0.0,
+    "stack": [
+      {
+        "name": "Ollama",
+        "category": "model",
+        "purpose": "Runs a small open-source model (e.g. Llama 3.1 8B) on your own machine",
+        "cost_month": 0.0
+      }
+    ],
+    "applied_rules": [
+      {
+        "id": "local_only",
+        "description": "Drop the cloud components and run everything on your own machine.",
+        "trigger": "local_only",
+        "note": "No data leaves your machine - model, vector store and app all run locally."
+      }
+    ],
+    "notes": [
+      "Estimated $0/mo vs your $30/mo budget — under budget."
+    ]
+  },
+  "llm": null
+}
+```
+
+The `llm` block is `null` when the plan was saved without an LLM pass. When there
+was one it holds the summary, the risks, the suggestions, the confidence, the
+prompt estimate and the three token numbers.
+
 ## Running the tests
 
 The tests use the standard library `unittest` module only, so nothing has to be
-installed. There are 101 tests covering the rules, the report, the command line and
-the optional LLM pass. From the repository root:
+installed. There are 151 tests covering the rules, the report, the command line, the
+optional LLM pass and the saved plans. From the repository root:
 
 ```bash
 python -m unittest discover -s ai-tech-stack-planner/tests -v
@@ -254,7 +416,9 @@ python -m unittest discover -s ai-tech-stack-planner/tests -v
 - **Phase 2 — LLM reasoning, token efficient.** Short structured prompts with JSON
   output, counting the tokens before and after each call. Optional, behind `--llm`;
   the rules still decide the stack. Tokens used: minimal. **Done.**
-- **Phase 3 — persistence.** Save and load project plans (file or database schemas).
+- **Phase 3 — persistence.** Save and load project plans as one JSON file per plan
+  in `plans/`. Loading a plan replays it without running the rules or paying for
+  the LLM again. **Done.**
 - **Phase 4 — UI and real cost data.** A simple web interface plus optional cloud
   pricing integration (Azure/AWS) for real cost estimates.
 
