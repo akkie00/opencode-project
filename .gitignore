@@ -15,6 +15,9 @@ env/
 # Saved plans — local project files, never committed by accident
 plans/
 
+# Live Azure price cache — refreshed daily, never committed by accident
+.cache/
+
 # Editors
 .vscode/
 .idea/

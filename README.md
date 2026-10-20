@@ -10,26 +10,41 @@ you need it (timeline) and what is fixed (constraints), and it prints a recommen
 stack with an estimated monthly cost and a few tips.
 
 There is also an optional LLM reasoning pass behind the `--llm` flag. It comments on
-the stack the rules picked — summary, risks, suggestions, confidence. It is the only
-part of the tool that talks to the network, and it stays off until you ask for it.
+the stack the rules picked — summary, risks, suggestions, confidence. Together with
+the live price list it is the only part of the tool that talks to the network, and
+it stays off until you ask for it.
 
 A plan can be saved and loaded again later. The saved plan keeps the stack and the
 LLM advice, so loading it prints the same answer without paying for the LLM twice.
 
+The same planner also runs in your browser: a small local web page with the form, the
+result and the saved plans. The web app can ask Azure for the real prices of the
+components it recommends, so the monthly cost is a real number instead of a guess.
+Both the live prices and the LLM are off until you tick the box. The web app is the
+only part of the project that needs Flask — the command line tool keeps working on
+the Python standard library alone.
+
 ## How it works
 
 ```text
-User input (goal, budget, timeline, constraints)
-        ↓
-[Rule Engine]      — deterministic if/then logic, no LLM
-        ↓
-[Stack Recommender] — picks the components and adds up the cost
-        ↓
-[Output Formatter]  — prints the readable recommendation
-        ↓
-[LLM Pass]          — optional (--llm): comments on the stack, never changes it
-        ↓
-[Storage]            — optional (--save): writes the plan as one JSON file
+                    the browser                      the command line
+                          │                                 │
+                          ↓                                 ↓
+                [Web App] (src/web.py)              [CLI] (src/main.py)
+                          │                                 │
+                          └──────────────┬──────────────────┘
+                                         ↓
+                             [Rule Engine]      — deterministic if/then logic, no LLM
+                                         ↓
+                             [Stack Recommender] — picks the components, adds up the cost
+                                         ↓
+                             [Output Formatter]  — the readable recommendation
+                                         ↓
+                             [LLM Pass]          — optional: comments on the stack, never changes it
+                                         ↓
+                             [Live Prices]       — optional: the real Azure prices
+                                         ↓
+                             [Storage]            — optional: the plan as one JSON file
 ```
 
 - **Rule engine** (`src/rules.py`) turns the budget into a tier (micro / mid /
@@ -45,6 +60,10 @@ User input (goal, budget, timeline, constraints)
 - **Storage** (`src/storage.py`) saves the plan — the profile, the recommendation and
   the LLM advice — as one JSON file in `plans/`, and reads it back without running
   the rules or the LLM again.
+- **Live prices** (`src/pricing.py`) are optional and off by default. They ask Azure's
+  public price list for the real meter prices and replace the rough estimates.
+- **Web app** (`src/web.py`) is the browser front end: one page, a small JSON API and
+  the same rules, the same LLM pass and the same plan files.
 
 ## Project layout
 
@@ -60,13 +79,22 @@ opencode-project/
     │   ├── rules.py         # If/then logic for stack recommendations (zero tokens)
     │   ├── recommender.py   # Combines rules into a tech stack recommendation
     │   ├── llm.py           # Optional LLM reasoning pass — the only networked module
-    │   └── storage.py       # Saves and loads plans as one JSON file per plan
+    │   ├── storage.py       # Saves and loads plans as one JSON file per plan
+    │   ├── pricing.py       # Live Azure prices from the public retail price list
+    │   └── web.py           # The local web app — Flask, the page and the JSON API
+    ├── templates/
+    │   └── index.html       # The one page of the web app
+    ├── static/
+    │   ├── app.js           # The page logic — plain JavaScript
+    │   └── style.css        # The page styles — plain CSS
     ├── tests/
     │   ├── test_rules.py        # Budget tiers, timeline buckets, rule engine
     │   ├── test_recommender.py  # Stacks, costs and the printed report
     │   ├── test_cli.py          # End-to-end runs of the command line
     │   ├── test_llm.py          # Prompt building, JSON parsing, token counting
-    │   └── test_storage.py      # Saving, loading, listing and deleting plans
+    │   ├── test_storage.py      # Saving, loading, listing and deleting plans
+    │   ├── test_pricing.py      # The live prices, the meters and the cache
+    │   └── test_web.py          # The web page and the JSON API
     └── assets/
         └── .gitkeep
 ```
@@ -399,14 +427,149 @@ The `llm` block is `null` when the plan was saved without an LLM pass. When ther
 was one it holds the summary, the risks, the suggestions, the confidence, the
 prompt estimate and the three token numbers.
 
+## The web app
+
+The same planner also runs in the browser: the same rules, the same optional LLM
+pass and the same saved plans, on one local page. The web app is the **only** part
+of the project that needs Flask — the command line tool keeps working on the
+standard library alone.
+
+### Setting it up
+
+The web app needs one package, so it runs inside a virtual environment:
+
+```bash
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt    # Windows
+source .venv/bin/activate && pip install -r requirements.txt     # macOS/Linux
+```
+
+### Starting it
+
+```bash
+.venv\Scripts\python.exe ai-tech-stack-planner/src/web.py
+```
+
+```text
+Open http://127.0.0.1:8000 in your browser.
+The app stops with Ctrl+C.
+```
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `--port` | the port to listen on | `8000` |
+| `--host` | the host to bind to | `127.0.0.1` — localhost only, so nothing on the network can reach it |
+| `--no-pricing` | do not use the live Azure prices, only the rough estimates | the prices are on |
+| `--region` | the Azure region to price in | `eastus` |
+| `--plans-dir` | the folder that holds the saved plans | the repository's `plans/` folder |
+
+### The three parts of the page
+
+1. **Your project** — the form: goal, monthly budget, timeline in weeks, the
+   constraint checkboxes, an "Ask the LLM for a second opinion" checkbox, a "Use
+   live Azure prices" checkbox and an optional "Save as" name.
+2. **The recommendation** — the stack as a table, the monthly cost against the
+   budget, a badge that says whether the prices are live or rough, the rules that
+   were applied, the tips, and the LLM reasoning with the token line.
+3. **Saved plans** — the list of the saved plans, with open and delete.
+
+### Nothing leaves your machine unless you ask
+
+Both checkboxes in the form start **unticked**. "Use live Azure prices" is off, so
+a plain visit to the page never makes a network call, and "Ask the LLM for a second
+opinion" is off, so no tokens are spent. You tick what you want.
+
+### The rough prices and the live prices
+
+Azure publishes **unit** prices, not monthly totals, so every component needs a
+usage assumption. The estimate is the unit price times the assumption, and the
+assumption is part of the note the module produces.
+
+The live prices below were fetched from the real price list for `eastus` and
+checked by hand:
+
+| Component | Meter | Assumption | Live $/mo |
+| --- | --- | --- | --- |
+| Azure OpenAI | GPT 5 nano input, per 1M tokens | 1M input tokens | $0.05 |
+| Azure App Service | P1 v3, per hour | 730 hours | $113.15 |
+| Azure Functions | Standard executions, per 10 | 1M executions (the plan includes 1M free) | $0.00 |
+| Azure AI Search | Standard S1, per hour | 730 hours | $245.28 |
+| Azure AI Document Intelligence | S0 pre-built, per 1K pages | 1,000 pages | $10.00 |
+| Azure Blob Storage | Hot LRS, per GB/month | 100 GB | $1.91 |
+| Azure Cache for Redis | C0, per hour | 730 hours | $16.06 |
+| Azure Key Vault | Operations, per 10K | 10,000 operations | $0.03 |
+| Azure Monitor | Basic log ingestion, per GB | 10 GB of logs | $5.00 |
+| Azure Private Endpoint | **no meter in the price list** | - | keeps the rough estimate |
+
+The rough estimates in `rules.py` are **not** the same numbers, and the live ones
+are usually higher, because they assume a real production size. The same RAG
+project is a good example:
+
+```bash
+python ai-tech-stack-planner/src/main.py --goal rag --budget 200 --timeline 4 --constraints needs_api
+```
+
+```text
+Rough estimates:  $160/mo     (App Service $30 + AI Search $100 + OpenAI $25 + Functions $5)
+Live Azure prices: $358.48/mo  (App Service $113.15 + AI Search $245.28 + OpenAI $0.05)
+```
+
+That is the point of the feature: the rough number is a starting guess, the live
+number is what the project would really cost at the stated usage.
+
+**Azure Private Endpoint has no meters in the price list at all**, so it stays on
+the rough estimate. A wrong price would be worse than no price.
+
+### The 24 hour cache
+
+The prices are cached in `.cache/azure-prices.json` in the repository root for 24
+hours, so the API is asked at most once a day. The folder is in `.gitignore`.
+
+### The JSON API
+
+The page is a normal HTTP client, so the same things can be done with `curl`:
+
+| Route | What it does |
+| --- | --- |
+| `GET /` | the page |
+| `GET /api/options` | the goals, the constraints and the defaults for the form |
+| `POST /api/plan` | plan a project (and optionally save it) |
+| `GET /api/plans` | the saved plans |
+| `GET /api/plans/<name>` | one saved plan |
+| `DELETE /api/plans/<name>` | delete a saved plan |
+| `POST /api/plans/<name>/refresh` | run the LLM again on a saved plan and write the advice back |
+
+Every error is `{"error": "a message"}` with `400` (bad input), `404` (no such
+plan) or `502` (the LLM call failed).
+
 ## Running the tests
 
-The tests use the standard library `unittest` module only, so nothing has to be
-installed. There are 151 tests covering the rules, the report, the command line, the
-optional LLM pass and the saved plans. From the repository root:
+The tests use the standard library `unittest` module only, so the command line
+planner needs nothing installed. There are 209 tests covering the rules, the report,
+the command line, the optional LLM pass, the saved plans, the live prices and the
+web app. From the repository root:
 
 ```bash
 python -m unittest discover -s ai-tech-stack-planner/tests -v
+```
+
+The 19 web tests **skip themselves** when Flask is not installed, so the command line
+planner stays testable with no dependencies at all:
+
+```text
+Ran 209 tests in 14.4s
+OK (skipped=19)
+```
+
+Inside the virtual environment all 209 run:
+
+```bash
+.venv\Scripts\python.exe -m unittest discover -s ai-tech-stack-planner/tests -v
+```
+
+```text
+Ran 209 tests in 15.4s
+OK
 ```
 
 ## Project phases
@@ -419,8 +582,8 @@ python -m unittest discover -s ai-tech-stack-planner/tests -v
 - **Phase 3 — persistence.** Save and load project plans as one JSON file per plan
   in `plans/`. Loading a plan replays it without running the rules or paying for
   the LLM again. **Done.**
-- **Phase 4 — UI and real cost data.** A simple web interface plus optional cloud
-  pricing integration (Azure/AWS) for real cost estimates.
+- **Phase 4 — UI and real cost data.** A small local web interface plus the live
+  Azure prices, off by default and cached for a day. **Done.**
 
 ## License
 

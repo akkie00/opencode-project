@@ -28,8 +28,8 @@ This file provides guidance for AI agents working on the `opencode-project` repo
 
 - It asks for a goal, a monthly budget, a timeline and constraints, applies deterministic if/then rules, and prints a recommended stack with a rough monthly cost.
 - The default run is free and offline: **0 LLM tokens, no API keys, no network access**. The optional `--llm` flag adds a reasoning pass that only comments on the stack the rules picked — the rules always decide.
-- Python 3 standard library only. There is nothing to install.
-- **Phase 1** (rule based recommender), **Phase 2** (optional LLM reasoning pass with token counting) and **Phase 3** (persistence — save and load project plans) are done. **Phase 4** (the web UI and real cost data) is next.
+- The CLI and the core modules are Python 3 standard library only — there is nothing to install. The web app needs Flask, and it runs in a virtual environment.
+- **Phase 1** (rule based recommender), **Phase 2** (optional LLM reasoning pass with token counting), **Phase 3** (persistence — save and load project plans) and **Phase 4** (the local web app and the live Azure prices) are done. The next step is publishing on GitHub: a LICENSE file, a contributing guide and a CI workflow that runs the tests.
 
 ## Folder Structure
 
@@ -38,7 +38,7 @@ opencode-project/
 ├── README.md                # User facing documentation of the planner
 ├── AGENTS.md                # Guidance for AI agents working in this repository
 ├── plan.md                  # Project plan, phase decisions and status
-├── requirements.txt         # Intentionally empty — standard library only
+├── requirements.txt         # One dependency: flask (the web app only)
 ├── .gitignore               # Ignores Python bytecode and caches
 ├── plans/                   # The saved plans — created at runtime, gitignored
 └── ai-tech-stack-planner/
@@ -47,13 +47,22 @@ opencode-project/
     │   ├── rules.py         # the rule engine — deterministic if/then logic (zero tokens)
     │   ├── recommender.py   # combines the rules into a stack + the printed report
     │   ├── llm.py           # optional LLM reasoning pass — the only networked module
-    │   └── storage.py       # saves and loads plans — one JSON file per plan
+    │   ├── storage.py       # saves and loads plans — one JSON file per plan
+    │   ├── pricing.py       # the live Azure prices from the public retail price list
+    │   └── web.py           # the local web app — Flask, the page and the JSON API
+    ├── templates/
+    │   └── index.html       # the one page of the web app
+    ├── static/
+    │   ├── app.js           # the page logic — plain JavaScript
+    │   └── style.css        # the page styles — plain CSS
     ├── tests/
     │   ├── test_rules.py        # budget tiers, timeline buckets, the rule engine
     │   ├── test_recommender.py  # stacks, costs and the printed report
     │   ├── test_cli.py          # end-to-end runs of the command line
     │   ├── test_llm.py          # prompt building, JSON parsing, token counting
-    │   └── test_storage.py      # saving, loading, listing and deleting plans
+    │   ├── test_storage.py      # saving, loading, listing and deleting plans
+    │   ├── test_pricing.py      # the live prices, the meters and the cache
+    │   └── test_web.py          # the web page and the JSON API
     └── assets/
         └── .gitkeep
 ```
@@ -63,6 +72,7 @@ opencode-project/
 - Commit messages should be concise and descriptive (e.g., "Add rule engine for budget tiers").
 - Keep the project minimal — do not add production code without discussion.
 - Stay on the Python standard library unless the user agrees otherwise; no third-party packages without explicit approval.
+- The CLI and the core modules stay on the Python standard library; Flask is only used by the web app, and the web tests must skip themselves when Flask is missing.
 - Place new source files under `ai-tech-stack-planner/src/`, tests under `ai-tech-stack-planner/tests/`, and supporting assets under `ai-tech-stack-planner/assets/`.
 
 ## Running the Planner
@@ -71,4 +81,12 @@ opencode-project/
 python ai-tech-stack-planner/src/main.py
 python ai-tech-stack-planner/src/main.py --goal rag --budget 200 --timeline 4 --constraints needs_api
 python -m unittest discover -s ai-tech-stack-planner/tests -v
+```
+
+The web app needs the virtual environment:
+
+```bash
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe ai-tech-stack-planner/src/web.py
 ```

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>AI Tech Stack Planner</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body
+  data-pricing-enabled="{{ 'true' if pricing_enabled else 'false' }}"
+  data-pricing-region="{{ pricing_region }}">
+
+  <header class="site-header">
+    <h1>AI Tech Stack Planner</h1>
+    <p class="tagline">
+      A minimal-cost AI stack for your project. The rules decide the stack;
+      the LLM only adds a second opinion.
+    </p>
+  </header>
+
+  <div id="error" class="error-banner" role="alert" hidden></div>
+
+  <main class="layout">
+
+    <!-- 1. The form -->
+    <section class="panel panel-form" id="planner-panel">
+      <h2>1. Your project</h2>
+
+      <form id="plan-form" novalidate>
+        <div class="field">
+          <label for="goal">Goal</label>
+          <select id="goal" name="goal" required></select>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="budget">Monthly budget (USD)</label>
+            <input id="budget" name="budget" type="number" min="0" step="1"
+                   inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="timeline_weeks">Timeline (weeks)</label>
+            <input id="timeline_weeks" name="timeline_weeks" type="number"
+                   min="1" step="1" inputmode="numeric">
+          </div>
+        </div>
+
+        <fieldset class="field">
+          <legend>Constraints</legend>
+          <div id="constraints" class="checkboxes"></div>
+        </fieldset>
+
+        <div class="field checkboxes">
+          <label class="check">
+            <input type="checkbox" id="use_llm">
+            <span>Ask the LLM for a second opinion</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="use_pricing">
+            <span>Use live Azure prices</span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label for="save_as">Save as (optional)</label>
+          <input id="save_as" name="save_as" type="text" placeholder="my-chat"
+                 autocomplete="off" spellcheck="false">
+          <p class="hint">Letters, digits, dash and underscore.</p>
+        </div>
+
+        <button type="submit" id="plan-button">Recommend a stack</button>
+        <p class="hint">The rules are free and offline. The LLM pass is optional.</p>
+      </form>
+    </section>
+
+    <!-- 2. The results -->
+    <section class="panel panel-results" id="results-panel" hidden>
+      <h2>2. The recommendation</h2>
+      <div id="results"></div>
+    </section>
+
+    <!-- 3. The saved plans -->
+    <section class="panel panel-plans" id="plans-panel">
+      <h2>3. Saved plans</h2>
+      <div id="plans"></div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <p>Free, local and offline by default. The live prices and the LLM pass are optional.</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -177,8 +177,59 @@ plan list, the deletion, a bad plan name and a missing plan were confirmed by ha
 and loading a saved plan was confirmed to reuse the saved advice instead of calling
 the LLM again.
 
+## Phase 4 Decisions (agreed during build)
+
+- **Flask for the web layer.** It is the first and only third-party dependency of
+  the project. Every other module stays on the Python standard library, and the
+  command line planner keeps working without Flask installed.
+- **A separate `web.py` entry point**, not a flag on the CLI. `main.py` stays the
+  command line planner; `web.py` starts the local server.
+- **The web app reuses the existing modules** instead of duplicating logic. Every
+  recommendation comes from `recommender.recommend()`, every rule from `rules.py`,
+  every LLM reply from `llm.call_llm()` and every file from `storage.py`. The only
+  new code is the HTTP layer, the JSON shapes and the checking of the input.
+- **Live Azure retail prices** from the public Azure Retail Prices API. No API key
+  and no Azure login. Every price carries a stated usage assumption, because Azure
+  publishes unit prices, not monthly totals.
+- **The web app listens on localhost only** (`127.0.0.1`), so nothing on the
+  network can reach it.
+- **Live prices are opt-in** in the form — the checkbox starts unticked — and the
+  price list is cached for 24 hours in `.cache/azure-prices.json`, so the API is
+  asked at most once a day.
+
+## Phase 4 Status — DONE
+
+Built and verified:
+
+- `ai-tech-stack-planner/src/pricing.py` — the live prices: the meter specs, the
+  price list call, the meter picking, the assumption notes and the 24 hour cache.
+  Standard library only, like every other module.
+- `ai-tech-stack-planner/src/web.py` — the Flask app: the page, the JSON API, the
+  flags and the entry point.
+- `ai-tech-stack-planner/templates/index.html`, `static/app.js`, `static/style.css`
+  — the page. Plain HTML, CSS and vanilla JavaScript: no CDN and no build step.
+- `ai-tech-stack-planner/tests/test_pricing.py` — 39 stdlib `unittest` tests.
+- `ai-tech-stack-planner/tests/test_web.py` — 19 tests, which skip themselves when
+  Flask is not installed.
+- `README.md` — documents the web app. `requirements.txt` — one line: `flask>=3.0`.
+- `.gitignore` — ignores the `.cache/` price cache.
+
+209 tests in total, all passing. Without Flask the 19 web tests skip themselves and
+the other 190 still run, so the command line planner stays testable with no
+dependencies at all.
+
+The live prices for `eastus` were fetched from the real API and checked by hand
+(App Service $113.15, AI Search $245.28, OpenAI $0.05), the page and the JSON API
+were confirmed by hand, the save / load / delete flow was confirmed in the browser,
+and the command line planner was confirmed to still work with the system Python.
+
 ## Next Step
-Phase 4: UI + real cost data. A simple web interface plus optional cloud pricing
-integration (Azure/AWS) for real cost estimates. The rule engine and the saved plan
-format stay as they are, so the web UI can use the same modules and read the same
-plan files.
+
+Phase 5: publishing on GitHub. All four planned phases are built, so the next step
+is to make the project ready to share:
+
+- a `LICENSE` file (MIT),
+- a short "Contributing" section in the README,
+- a GitHub Actions workflow that runs the tests on both Python versions.
+
+The rule engine, the CLI and the saved plan format stay as they are.

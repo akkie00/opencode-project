@@ -7,7 +7,10 @@
 # calls any OpenAI-compatible endpoint with urllib.request and json from
 # the standard library, and the tests use the stdlib unittest module.
 #
-# Later phases may add packages (for example a web framework for the
-# Phase 4 UI). Add them below, one per line, and install them with:
+# Later phases may add packages. Add them below, one per line, and install
+# them with:
 #
 #     pip install -r requirements.txt
+
+# Phase 4 adds the web interface.
+flask>=3.0
