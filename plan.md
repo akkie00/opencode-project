@@ -214,8 +214,8 @@ Built and verified:
 - `README.md` — documents the web app. `requirements.txt` — one line: `flask>=3.0`.
 - `.gitignore` — ignores the `.cache/` price cache.
 
-209 tests in total, all passing. Without Flask the 19 web tests skip themselves and
-the other 190 still run, so the command line planner stays testable with no
+217 tests in total, all passing. Without Flask the 19 web tests skip themselves and
+the other 198 still run, so the command line planner stays testable with no
 dependencies at all.
 
 The live prices for `eastus` were fetched from the real API and checked by hand
@@ -225,11 +225,11 @@ and the command line planner was confirmed to still work with the system Python.
 
 ## Next Step
 
-Phase 5: publishing on GitHub. All four planned phases are built, so the next step
-is to make the project ready to share:
+Phase 5 is done: the project is ready to share. The MIT `LICENSE` file is in place,
+the README has a short "Contributing" section, and a GitHub Actions workflow runs
+the tests on Python 3.11 to 3.14 — once with Flask installed and once without it,
+so the command line planner stays testable with zero dependencies. The rule engine,
+the CLI and the saved plan format stay as they are.
 
-- a `LICENSE` file (MIT),
-- a short "Contributing" section in the README,
-- a GitHub Actions workflow that runs the tests on both Python versions.
-
-The rule engine, the CLI and the saved plan format stay as they are.
+The next step is publishing the repository on GitHub: push the branch, open a pull
+request, and add a repository description and topics.

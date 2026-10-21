@@ -546,7 +546,7 @@ plan) or `502` (the LLM call failed).
 ## Running the tests
 
 The tests use the standard library `unittest` module only, so the command line
-planner needs nothing installed. There are 209 tests covering the rules, the report,
+planner needs nothing installed. There are 217 tests covering the rules, the report,
 the command line, the optional LLM pass, the saved plans, the live prices and the
 web app. From the repository root:
 
@@ -558,18 +558,18 @@ The 19 web tests **skip themselves** when Flask is not installed, so the command
 planner stays testable with no dependencies at all:
 
 ```text
-Ran 209 tests in 14.4s
+Ran 217 tests in 14.4s
 OK (skipped=19)
 ```
 
-Inside the virtual environment all 209 run:
+Inside the virtual environment all 217 run:
 
 ```bash
 .venv\Scripts\python.exe -m unittest discover -s ai-tech-stack-planner/tests -v
 ```
 
 ```text
-Ran 209 tests in 15.4s
+Ran 217 tests in 15.4s
 OK
 ```
 
@@ -585,7 +585,35 @@ OK
   the LLM again. **Done.**
 - **Phase 4 — UI and real cost data.** A small local web interface plus the live
   Azure prices, off by default and cached for a day. **Done.**
+- **Phase 5 — publishing.** An MIT `LICENSE`, a short "Contributing" section and a
+  GitHub Actions workflow that runs the tests with and without Flask. **Done.**
+
+## Contributing
+
+Pull requests are welcome. A few house rules keep the project small and easy to read:
+
+- The command line planner and the core modules stay on the Python standard
+  library. Flask is only used by the web app.
+- New features are discussed before they are written, so the plan stays clear.
+- A pull request should keep the tests passing and the README up to date.
+
+Run the tests before you open the pull request. Without Flask, nothing is installed:
+
+```bash
+python -m unittest discover -s ai-tech-stack-planner/tests -v
+```
+
+The 19 web tests skip themselves when Flask is missing, so the suite still passes.
+
+With Flask, inside the virtual environment:
+
+```bash
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m unittest discover -s ai-tech-stack-planner/tests -v
+```
+
+The details of the project live in [AGENTS.md](AGENTS.md).
 
 ## License
 
-MIT. The owner plans to publish this project on GitHub.
+MIT — see [LICENSE](LICENSE).

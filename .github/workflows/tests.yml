@@ -1,0 +1,51 @@
+name: Tests
+
+# Every push and every pull request, on any branch.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run the tests
+        run: python -m unittest discover -s ai-tech-stack-planner/tests -v
+
+  stdlib-only:
+    name: Tests without Flask (standard library only)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # No pip install here on purpose: the command line planner must keep
+      # working with zero dependencies. The 19 web tests skip themselves.
+      - name: Run the tests without Flask installed
+        run: python -m unittest discover -s ai-tech-stack-planner/tests -v
