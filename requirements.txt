@@ -1,0 +1,16 @@
+# AI Tech Stack Planner - dependencies
+#
+# Phase 1 runs on the Python 3 standard library only, so there are no
+# third-party packages to install yet.
+#
+# Phase 2 (the optional LLM reasoning pass) also has no dependencies: it
+# calls any OpenAI-compatible endpoint with urllib.request and json from
+# the standard library, and the tests use the stdlib unittest module.
+#
+# Later phases may add packages. Add them below, one per line, and install
+# them with:
+#
+#     pip install -r requirements.txt
+
+# Phase 4 adds the web interface.
+flask>=3.0
